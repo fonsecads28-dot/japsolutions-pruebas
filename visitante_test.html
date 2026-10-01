@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Entrada - Smart Doorbell</title>
+    <!-- Estilos CSS nativos locales (No requieren internet) -->
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #ffffff;
+            font-family: system-ui, -apple-system, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 16px;
+        }
+        .contenedor {
+            width: 100%;
+            max-width: 420px;
+            background-color: #1e293b;
+            border-radius: 24px;
+            padding: 24px;
+            border: 1px solid #334155;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            box-sizing: border-box;
+        }
+        h1 {
+            color: #34d399;
+            text-align: center;
+            font-size: 24px;
+            margin-top: 0;
+            margin-bottom: 8px;
+        }
+        p {
+            text-align: center;
+            font-size: 13px;
+            color: #94a3b8;
+            margin-top: 0;
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            font-size: 14px;
+            color: #cbd5e1;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        select, input {
+            width: 100%;
+            background-color: #020617;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 12px;
+            color: #ffffff;
+            font-size: 15px;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+        }
+        select:focus, input:focus {
+            outline: none;
+            border-color: #34d399;
+        }
+        
+        /* Contenedor del reproductor de video de la cámara */
+        .video-box {
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            background-color: #020617;
+            border-radius: 16px;
+            border: 2px dashed #334155;
+            margin-bottom: 20px;
+            overflow: hidden;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            /* Efecto espejo para que se sienta natural al verse a uno mismo */
+            transform: scaleX(-1); 
+        }
+        .video-placeholder {
+            position: absolute;
+            color: #64748b;
+            font-size: 13px;
+            text-align: center;
+            pointer-events: none;
+        }
+
+        button {
+            width: 100%;
+            background-color: #059669;
+            color: white;
+            border: none;
+            font-weight: bold;
+            padding: 16px;
+            border-radius: 12px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover { background-color: #047857; }
+        button:active { transform: scale(0.98); }
+        
+        .consola {
+            margin-top: 20px;
+            padding: 16px;
+            background-color: #020617;
+            border-radius: 12px;
+            border: 1px solid #1e293b;
+            font-family: monospace;
+            font-size: 12px;
+            color: #94a3b8;
+            display: none;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="contenedor">
+        <h1 id="edf-nombre">Cargando Edificio...</h1>
+        <p>Código QR Escaneado: <span style="font-family: monospace; color: #e2e8f0;">edf-madero-452</span></p>
+
+        <!-- 📷 NUEVO: Ventana de reproducción de Video Local -->
+        <label>Vista previa de la cámara (Frente de calle):</label>
+        <div class="video-box">
+            <div id="placeholder-text" class="video-placeholder">
+                🎥 La cámara se activará al iniciar llamada
+            </div>
+            <video id="video-local" autoplay playsinline muted></video>
+        </div>
+
+        <label>Seleccione el Departamento:</label>
+        <select id="select-deptos">
+            <option>Esperando datos del servidor...</option>
+        </select>
+
+        <label>Su Nombre:</label>
+        <input type="text" id="visitante-nombre" value="Visita de Calle">
+
+        <button id="btn-llamar">🔔 Iniciar Videollamada</button>
+
+        <div id="consola-status" class="consola">
+            <strong>Estado del Servidor:</strong> <span id="status-text">Esperando acción...</span>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = "http://localhost:8000/api/v1";
+        const TOKEN_URL_EJEMPLO = "edf-madero-452";
+        let localStream = null;
+
+        // 1. Cargar directorio desde SQLite de fondo
+        async function cargarDatosQR() {
+            const edfNombreHtml = document.getElementById('edf-nombre');
+            const select = document.getElementById('select-deptos');
+
+            try {
+                const response = await fetch(`${API_BASE}/visitante/configurar-qr/${TOKEN_URL_EJEMPLO}`);
+                if (!response.ok) throw new Error("QR no registrado");
+                
+                const data = await response.json();
+                edfNombreHtml.innerText = data.edificio_nombre;
+                
+                select.innerHTML = "";
+                data.directorios.forEach(depto => {
+                    const option = document.createElement('option');
+                    option.value = depto.id;
+                    option.innerText = `Departamento ${depto.unidad}`;
+                    select.appendChild(option);
+                });
+            } catch (err) {
+                edfNombreHtml.innerText = "❌ Error Local";
+                edfNombreHtml.style.color = "#f87171";
+                console.error(err);
+            }
+        }
+
+        // 2. NUEVO: Función nativa de HTML5 para capturar la cámara web
+        async function activarCamaraWeb() {
+            const videoElement = document.getElementById('video-local');
+            const placeholder = document.getElementById('placeholder-text');
+
+            try {
+                // Solicitar acceso a video y audio de la computadora
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480, facingMode: "user" },
+                    audio: true
+                });
+                
+                // Vincular el flujo de hardware directamente a la etiqueta <video>
+                videoElement.srcObject = localStream;
+                placeholder.style.display = "none";
+                document.querySelector('.video-box').style.borderStyle = "solid";
+                document.querySelector('.video-box').style.borderColor = "#34d399";
+                
+                return true;
+            } catch (err) {
+                console.error("No se pudo acceder a la cámara web:", err);
+                alert("⚠️ Error: El navegador bloqueó el acceso a la cámara o no tienes un dispositivo de video conectado.");
+                return false;
+            }
+        }
+
+        // 3. Evento al hacer clic en "Iniciar Videollamada"
+        document.getElementById('btn-llamar').addEventListener('click', async () => {
+            const deptoId = document.getElementById('select-deptos').value;
+            const nombre = document.getElementById('visitante-nombre').value;
+            const consola = document.getElementById('consola-status');
+            const statusText = document.getElementById('status-text');
+
+            consola.style.display = "block";
+            statusText.innerText = "Solicitando permisos de cámara e iniciando sala...";
+
+            // Primero activamos físicamente el hardware de la cámara
+            const camaraActiva = await activarCamaraWeb();
+            if (!camaraActiva) {
+                statusText.innerText = "❌ Llamada cancelada por falta de permisos de cámara.";
+                return;
+            }
+
+            try {
+                // Llamamos a tu API asíncrona de FastAPI
+                const response = await fetch(`${API_BASE}/visitante/llamar`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        departamento_id: parseInt(deptoId),
+                        nombre_visitante: nombre
+                    })
+                });
+
+                const resultado = await response.json();
+                
+                statusText.innerHTML = `
+                    #<br>✅ Sala Creada: <span style="color: #60a5fa;">${resultado.room_name}</span>
+                    #<br>📬 Transmisión Local Activa.
+                    #<br>🔑 Token WebRTC de LiveKit listo para el visitante.
+                    #<br><br><strong style="color: #34d399;">🔑 TOKEN RESIDENTE (COPIAR A FLUTTER):</strong>
+                    #<textarea onclick="this.select()" style="width:100%; height:60px; background:#020617; color:#94a3b8; font-family:monospace; font-size:10px; border:1px solid #334155; border-radius:8px; margin-top:8px; padding:4px;" readonly>${resultado.token_residente}</textarea>
+                    <br>✅ Petición procesada en el servidor.
+                    <br><br><strong style="color: #34d399;">🔍 RESPUESTA CRUDA DE PYTHON:</strong>
+                    <textarea style="width:100%; height:120px; background:#020617; color:#94a3b8; font-family:monospace; font-size:10px; border:1px solid #334155; border-radius:8px; margin-top:8px; padding:4px;" readonly>${JSON.stringify(resultado, null, 2)}</textarea>
+                `;
+            } catch (err) {
+                statusText.innerText = "❌ Error al conectar con la API local.";
+                console.error(err);
+            }
+        });
+
+        window.addEventListener('DOMContentLoaded', cargarDatosQR);
+    </script>
+</body>
+</html>

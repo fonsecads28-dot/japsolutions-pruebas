@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Entrada - Smart Doorbell</title>
+    <!-- Corregido: Usamos el CDN estable de Tailwind v3 para archivos locales sin compilar -->
+    <script src="https://tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-white font-sans flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-md bg-slate-900 rounded-3xl p-6 border border-slate-800 shadow-xl">
+        <!-- Nombre del Edificio Dinámico -->
+        <h1 id="edf-nombre" class="text-2xl font-bold text-center text-emerald-400 mb-2">Cargando Edificio...</h1>
+        <p class="text-xs text-slate-400 text-center mb-6">Código QR Escaneado: <span class="text-slate-300 font-mono">edf-madero-452</span></p>
+
+        <!-- Mensaje de alerta por si el backend está apagado -->
+        <div id="alerta-error" class="hidden bg-red-950/50 border border-red-800 text-red-200 text-xs rounded-xl p-3 mb-4 text-center">
+            ⚠️ No se pudo conectar con el servidor de Python. Asegúrate de haber ejecutado <code class="bg-slate-950 px-1 py-0.5 rounded">python main.py</code> en la terminal.
+        </div>
+
+        <!-- Directorio de Unidades -->
+        <label class="block text-sm font-medium text-slate-300 mb-2">Seleccione el Departamento:</label>
+        <select id="select-deptos" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 mb-6">
+            <option>Esperando datos del servidor...</option>
+        </select>
+
+        <!-- Nombre del Visitante -->
+        <label class="block text-sm font-medium text-slate-300 mb-2">Su Nombre:</label>
+        <input type="text" id="visitante-nombre" value="Visita de Calle" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 mb-6">
+
+        <!-- Botón de Llamada -->
+        <button id="btn-llamar" class="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-98 transition-all text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-950/20">
+            🔔 Iniciar Videollamada
+        </button>
+
+        <!-- Consola de Estado / Debugger -->
+        <div id="consola-status" class="mt-6 p-4 bg-slate-950 rounded-xl border border-slate-800 text-xs font-mono text-slate-400 hidden">
+            <strong>Estado del Servidor:</strong> <span id="status-text">Esperando acción...</span>
+        </div>
+    </div>
+
+    <script>
+        // Usamos 127.0.0.1 para mantener la misma consistencia de origen que usa tu Live Server
+        const API_BASE = "http://localhost:8000/api/v1";
+        const TOKEN_URL_EJEMPLO = "edf-madero-452";
+
+        async function cargarDatosQR() {
+            const edfNombreHtml = document.getElementById('edf-nombre');
+            const alertaError = document.getElementById('alerta-error');
+            const select = document.getElementById('select-deptos');
+
+            try {
+                const response = await fetch(`${API_BASE}/visitante/configurar-qr/${TOKEN_URL_EJEMPLO}`);
+                if (!response.ok) throw new Error("QR no registrado en la base de datos");
+
+                const data = await response.json();
+
+                // Pintar datos exitosos
+                edfNombreHtml.innerText = data.edificio_nombre;
+                alertaError.classList.add('hidden');
+
+                // Limpiar e inyectar departamentos reales
+                select.innerHTML = "";
+                if (data.directorios.length === 0) {
+                    select.innerHTML = "<option>No hay departamentos registrados</option>";
+                } else {
+                    data.directorios.forEach(depto => {
+                        const option = document.createElement('option');
+                        option.value = depto.id;
+                        option.innerText = `Departamento ${depto.unidad}`;
+                        select.appendChild(option);
+                    });
+                }
+            } catch (err) {
+                edfNombreHtml.innerText = "❌ Error de Conexión";
+                edfNombreHtml.classList.replace("text-emerald-400", "text-red-400");
+                alertaError.classList.remove('hidden');
+                select.innerHTML = "<option>Error al cargar unidades</option>";
+                console.error("Error capturado:", err);
+            }
+        }
+
+        document.getElementById('btn-llamar').addEventListener('click', async () => {
+            const deptoId = document.getElementById('select-deptos').value;
+            const nombre = document.getElementById('visitante-nombre').value;
+            const consola = document.getElementById('consola-status');
+            const statusText = document.getElementById('status-text');
+
+            if (!deptoId || isNaN(deptoId)) {
+                alert("Por favor, seleccione un departamento válido primero.");
+                return;
+            }
+
+            consola.classList.remove('hidden');
+            statusText.innerText = "Enviando señal a FastAPI...";
+
+            try {
+                const response = await fetch(`${API_BASE}/visitante/llamar`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        departamento_id: parseInt(deptoId),
+                        nombre_visitante: nombre
+                    })
+                });
+
+                if (!response.ok) throw new Error("Error en la respuesta del servidor");
+                const resultado = await response.json();
+
+                statusText.innerHTML = `
+                    <br>✅ Sala Creada: <span class="text-blue-400">${resultado.room_name}</span>
+                    <br>📬 ¿Notificado?: <span class="${resultado.residente_notificado ? 'text-emerald-400' : 'text-amber-400'}">${resultado.residente_notificado}</span>
+                    <br>🔑 Token WebRTC generado listo.
+                `;
+            } catch (err) {
+                statusText.innerText = "❌ Error al conectar con la API al iniciar llamada.";
+                console.error(err);
+            }
+        });
+
+        window.addEventListener('DOMContentLoaded', cargarDatosQR);
+    </script>
+</body>
+</html>
